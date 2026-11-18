@@ -1,0 +1,76 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        !exists(/databases/$(database)/documents/users/$(request.auth.uid)) ||
+        (getUserData().approved != false && (getUserData().role == 'admin' || getUserData().role == 'master_admin'))
+      );
+    }
+
+    function isStaffOrAdmin() {
+      return isSignedIn() && (
+        !exists(/databases/$(database)/documents/users/$(request.auth.uid)) ||
+        (getUserData().approved != false && (getUserData().role == 'garcom' || getUserData().role == 'admin' || getUserData().role == 'master_admin'))
+      );
+    }
+
+    // Configurações da loja, cardápio e mesas: leitura pública (cliente QR), escrita apenas ADM
+    match /config_loja/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /produtos/{prodId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /mesas/{mesaId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Pedidos: cliente na mesa QR cria pedido e acompanha;
+    // Garçom/ADM atualiza atendimento, pagamento e liberação da mesa.
+    match /pedidos/{pedidoId} {
+      allow create, read: if true;
+      allow update: if isStaffOrAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Chamados de Garçom
+    match /chamados_garcom/{chamadoId} {
+      allow create, read: if true;
+      allow update: if isStaffOrAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Histórico consolidado de fechamentos e pagamentos de mesas
+    match /historico_atendimentos/{histId} {
+      allow read, create, update: if isStaffOrAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Usuários: sem auto-cadastro público.
+    // ADM inicial criado via Firebase Auth Console cria seu próprio perfil master_admin no 1º login,
+    // e o ADM pode criar perfis apenas com cargo 'garcom'.
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && (
+        (request.auth.uid == userId && !exists(/databases/$(database)/documents/users/$(userId))) ||
+        (isAdmin() && request.resource.data.role == 'garcom')
+      );
+      allow update, delete: if isAdmin();
+    }
+  }
+}
